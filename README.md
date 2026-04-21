@@ -4,7 +4,7 @@
 
 ソースコードは以下のリンク先（Google Colaboratory）で実行可能
 
-[ハンズオン1: 顔画像解析](https://colab.research.google.com/github/kokitsuyuzaki/ChuoUniversity2022/blob/master/faceimages.ipynb)
+[ハンズオン1: 顔画像解析](https://colab.research.google.com/github/kokitsuyuzaki/OsakaUniversity2026/blob/master/faceimages.ipynb)
 
-[ハンズオン2: 血清学データ解析](https://colab.research.google.com/github/kokitsuyuzaki/ChuoUniversity2022/blob/master/serology.ipynb)
+[ハンズオン2: 血清学データ解析](https://colab.research.google.com/github/kokitsuyuzaki/OsakaUniversity2026/blob/master/serology.ipynb)
 
