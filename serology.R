@@ -13,8 +13,11 @@ library("reshape2")
 library("RColorBrewer")
 
 # 定数の設定
-# 元論文ではCP分解（ランク2）を使用し、2成分で分散の74%を説明した
-# ここではTucker分解（HOSVD）を用いるが、同様に2成分で主要パターンを抽出する
+# 元論文 (Tan et al., Mol Syst Biol, 2021) ではCMTF（CP分解ベース）のランク2を使用し、
+# 2成分だけで分散の74%を説明できることを示した
+# ここではTucker分解（HOSVD）を用いる
+# HOSVDはCP分解と異なり、因子行列が直交制約を持ち、コアテンソルを介して成分間の
+# 相互作用も表現できるため、因子の解釈が異なる場合がある
 J <- 2  # Tucker分解のランク（成分数）
 HEATMAP_COLORS <- brewer.pal(11, "PiYG")
 HEATMAP_THEME <- theme(
@@ -115,18 +118,34 @@ group <- serology_data$group
 
 # =============================================================================
 # Tucker分解（HOSVD: 高次特異値分解）
-# テンソルを各モードの因子行列とコアテンソルに分解する
-# 元論文ではCP分解を使用しているため結果は完全には一致しないが、
-# 各モード（受容体・抗原・検体）の主要パターンを抽出できる点は共通している
+# テンソル X を X ≈ G ×1 U1 ×2 U2 ×3 U3 に分解する
+#   U1 (11×2): 受容体の因子行列、U2 (6×2): 抗原の因子行列、U3 (438×2): 検体の因子行列
+#   G (2×2×2): コアテンソル（成分間の相互作用を表す）
+#
+# 元論文との手法の違い:
+#   - 元論文: CMTF（CP分解ベース） → 因子に直交制約なし、コアテンソルなし（対角）
+#   - ここ: HOSVD（Tucker分解） → 因子が直交、コアテンソルが非対角成分を持つ
+#   CP分解では各成分が独立に解釈できるが、HOSVDでは成分間にコアテンソルを介した
+#   相互作用があるため、個々の成分の解釈は論文とは異なる場合がある
 # =============================================================================
 res_tucker <- hosvd(covid19, ranks=rep(J, length=3))
 
 # 受容体パターンのヒートマップ（モード1の因子行列）
 # 各受容体/抗体が2つの成分にどの程度寄与しているかを示す
-# 元論文の結論:
-#   Component 1（急性型）: IgG3, IgM, IgA や各種Fcタンパク質が強く関与
-#   Component 2（長期型）: IgG1に特異的な応答パターン
-# HOSVDでも類似の傾向が見られるか確認する
+#
+# 元論文（CP分解）での受容体パターン (Figure 6E):
+#   Component 1（急性型）: IgG3, IgM, IgA1, IgA2 + FcR系（FcR2A, FcR3A, FcR3B, FcRalpha）が高い
+#     → 急性期の幅広い抗体アイソタイプとFc受容体を介した機能的免疫応答を反映
+#   Component 2（長期型）: IgG1が突出して高く、他は低い
+#     → クラススイッチ後の成熟した長期的抗体応答を反映
+#
+# HOSVDでの結果:
+#   Comp1: FcR系（FcR2A, FcR2B, FcR3A, FcR3B）が突出 → 論文のComp1と部分的に一致
+#     ただし論文と異なりIgG3, IgM, IgAのComp1への寄与は小さい
+#   Comp2: IgG2が最も高く、次いでIgG1 → 論文の「IgG1のみ突出」とは異なる
+#     直交制約のためIgG1だけに集中した成分が作れず、IgG2も混ざっている
+#   全体として、FcR系 vs IgGサブクラスの分離は確認できるが、
+#   論文ほど「急性型 vs 長期型」のクリーンな解釈にはならない
 df_r <- prepare_pattern(res_tucker$U[[1]],
     dimnames(covid19@data)$receptor, c("Receptor"))
 plot_heatmap(df_r, "Receptor")
@@ -134,6 +153,15 @@ plot_heatmap(df_r, "Receptor")
 # 抗原パターンのヒートマップ（モード2の因子行列）
 # 各抗原（SARS-CoV-2のスパイクタンパク質やその部位）が
 # 2つの成分にどの程度寄与しているかを示す
+#
+# 元論文では抗原パターンは両成分とも比較的均一で、大きな差異はなかった (Figure 6D)
+# つまり急性型・長期型の違いは「どの抗原に反応するか」ではなく
+# 「どの抗体/受容体で応答するか」によって特徴づけられる
+#
+# HOSVDでの結果:
+#   Comp1は全抗原で比較的均一 → 論文と一致
+#   Comp2ではS2とS1.Trimerが正負に大きく分かれている
+#   これは直交制約の影響であり、論文のCP分解では見られなかったパターン
 df_a <- prepare_pattern(res_tucker$U[[2]],
     dimnames(covid19@data)$antigen, c("Antigen"))
 plot_heatmap(df_a, "Antigen")
@@ -141,7 +169,21 @@ plot_heatmap(df_a, "Antigen")
 # 検体パターンのヒートマップ（モード3の因子行列、重症度グループ別）
 # 各検体の2成分上のスコアを、重症度グループごとに並べて表示する
 # 重症度分類: Negative(陰性), Mild(軽症), Moderate(中等症), Severe(重症), Deceased(死亡)
-# グループ間でスコアの分布に違いがあれば、免疫応答パターンが重症度と関連することを示唆する
+#
+# 元論文での検体パターン (Figure 6F, 6G):
+#   - Severe群は両成分とも高い値を示した（強い免疫応答）
+#   - Deceased群はSevere群と比べて応答が低下・遅延していた
+#   - Negative群の一部はComponent 2（IgG1）のみ陽性
+#     → 他のコロナウイルスとの交差反応による既存免疫の可能性
+#   - 1週目のデータだけでSevere vs Deceasedの予測AUC=0.73を達成
+#
+# HOSVDでの結果:
+#   Severe群のみComp2の平均が正 → 他群と異なる免疫応答パターンを持ち、論文と整合
+#   Negative群はComp2の分散が最も小さい → 応答が弱く均一
+#   Deceased群はComp2の分散が大きい → 応答にばらつきがあり、
+#     論文の「Deceased群は応答が低下・遅延」と整合する
+#   ただしコアテンソルの非対角成分が大きいため、Comp1とComp2を
+#   独立に解釈することは難しく、論文のCP分解ほど明快な解釈はできない
 df_s <- prepare_pattern(res_tucker$U[[3]],
     dimnames(covid19@data)$samples, c("Sample"), group=group)
 plot_heatmap(df_s, "Sample", facet_col="Group",
